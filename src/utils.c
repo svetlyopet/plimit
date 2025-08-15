@@ -17,81 +17,115 @@ static long long pow2(int e) {
   return v;
 }
 
+static void log_f(FILE *stream, const char *fmt, va_list ap) {
+  char buf[256];
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  fputs(buf, stream);
+  fputc('\n', stream);
+}
+
+void slogf(log_dest_t dest, const char *fmt, ...) {
+  FILE *stream = (dest == LOG_STDOUT) ? stdout : stderr;
+  va_list ap;
+  va_start(ap, fmt);
+  log_f(stream, fmt, ap);
+  va_end(ap);
+}
+
 void vlogf(bool enabled, const char *fmt, ...) {
   if (!enabled) {
     return;
   }
+  FILE *stream = stdout;
   va_list ap;
   va_start(ap, fmt);
-  write_stdout(fmt, ap);
-  write_stdout("\n");
+  log_f(stream, fmt, ap);
   va_end(ap);
 }
 
-void die(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  write_stderr(fmt, ap);
-  write_stderr("\n");
-  va_end(ap);
+void fatal_errorf(const char *fmt, ...) {
+  slogf(LOG_STDERR, "Fatal error: ");
+  slogf(LOG_STDERR, fmt);
   exit(EXIT_FAILURE);
 }
 
-void sysdie(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  write_stderr(fmt, ap);
-  write_stderr(": %s\n", strerror(errno));
-  va_end(ap);
+void fatal_sys_errorf(const char *fmt, ...) {
+  slogf(LOG_STDERR, "Fatal system error: ");
+  slogf(LOG_STDERR, "%s: %s\n", fmt, strerror(errno));
   exit(EXIT_FAILURE);
+}
+
+int create_file(const char *path, mode_t mode, bool dry_run, bool verbose) {
+  if (dry_run) {
+    slogf(LOG_STDOUT, "[dry-run] ACTION: create file | PATH: '%s' | MODE: %o",
+          path, mode);
+    return PLIMIT_OK;
+  }
+  if (!path) {
+    return PLIMIT_ERR_ARG;
+  }
+  int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+  if (fd < 0) {
+    return PLIMIT_ERR_IO;
+  }
+  close(fd);
+  vlogf(verbose, "[info] ACTION: create file | PATH: '%s' | MODE: %o", path,
+        mode);
+  return PLIMIT_OK;
 }
 
 int write_file(const char *path, const char *data, bool dry_run, bool verbose) {
   if (dry_run) {
-    vlogf(verbose, "[dry-run] echo '%s' > %s", data, path);
-    return 0;
+    slogf(LOG_STDOUT, "[dry-run] ACTION: write file | PATH: '%s' | DATA: '%s'",
+          path, data);
+    return PLIMIT_OK;
   }
   int fd = open(path, O_WRONLY | O_CLOEXEC);
   if (fd < 0) {
-    return -1;
+    return PLIMIT_ERR_IO;
   }
   size_t len = strlen(data);
   ssize_t n = write(fd, data, len);
   close(fd);
   if (n < 0 || (size_t)n != len) {
-    return -1;
+    return PLIMIT_ERR_IO;
   }
-  return 0;
+  vlogf(verbose, "[info] ACTION: write file | PATH: '%s' | DATA: '%s'", path,
+        data);
+  return PLIMIT_OK;
 }
 
 int append_file(const char *path, const char *data, bool dry_run,
                 bool verbose) {
   if (dry_run) {
-    vlogf(verbose, "[dry-run] echo '%s' >> %s", data, path);
-    return 0;
+    slogf(LOG_STDOUT, "[dry-run] ACTION: append file | PATH: '%s' | DATA: '%s'",
+          path, data);
+    return PLIMIT_OK;
   }
   int fd = open(path, O_WRONLY | O_APPEND | O_CLOEXEC);
   if (fd < 0) {
-    return -1;
+    return PLIMIT_ERR_IO;
   }
   size_t len = strlen(data);
   ssize_t n = write(fd, data, len);
   close(fd);
   if (n < 0 || (size_t)n != len) {
-    return -1;
+    return PLIMIT_ERR_IO;
   }
-  return 0;
+  vlogf(verbose, "[info] ACTION: append file | PATH: '%s' | DATA: '%s'", path,
+        data);
+  return PLIMIT_OK;
 }
 
 long long parse_bytes(const char *s) {
   if (!s || !*s) {
-    return -1;
+    return PLIMIT_ERR_ARG;
   }
   char *end = NULL;
   errno = 0;
   long double v = strtold(s, &end);
   if (errno != 0) {
-    return -1;
+    return PLIMIT_ERR_PARSE;
   }
   long long mul = 1;
   if (*end) {
@@ -110,72 +144,53 @@ long long parse_bytes(const char *s) {
     } else if (*end == 0) {
       mul = 1;
     } else {
-      return -1;
+      return PLIMIT_ERR_PARSE;
     }
   }
   long double r = v * (long double)mul;
   if (r < 0) {
-    return -1;
+    return PLIMIT_ERR_PARSE;
   }
   if (r > (long double)LLONG_MAX) {
-    return -1;
+    return PLIMIT_ERR_PARSE;
   }
   return (long long)r;
 }
 
 long long parse_ll(const char *s, const char *name) {
   if (!s) {
-    return -1;
+    return PLIMIT_ERR_ARG;
   }
   char *end = NULL;
   errno = 0;
   long long v = strtoll(s, &end, 10);
   if (errno || *end) {
-    die("invalid %s: %s", name, s);
+    fatal_errorf("parse_ll: invalid value for %s: '%s'", name, s);
   }
   return v;
 }
 
 int ensure_dir(const char *path, mode_t mode, bool dry_run, bool verbose) {
   if (dry_run) {
-    vlogf(verbose, "[dry-run] mkdir -p %s", path);
-    return 0;
+    slogf(LOG_STDOUT,
+          "[dry-run] ACTION: ensure directory | PATH: '%s' | MODE: %o", path,
+          mode);
+    return PLIMIT_OK;
   }
   struct stat st;
   if (stat(path, &st) == 0) {
     if (!S_ISDIR(st.st_mode)) {
       errno = ENOTDIR;
-      return -1;
+      return PLIMIT_ERR_IO;
     }
-    return 0;
+    return PLIMIT_OK;
   }
   if (mkdir(path, mode) == 0) {
-    return 0;
+    vlogf(verbose, "[info] ACTION: ensure directory | PATH: '%s' | MODE: %o",
+          path, mode);
+    return PLIMIT_OK;
   }
-  return -1;
-}
-
-int have_cgroupv2(void) {
-  struct stat st;
-  return stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0;
+  return PLIMIT_ERR_IO;
 }
 
 int is_root(void) { return geteuid() == 0; }
-
-void write_stderr(const char *fmt, ...) {
-  char buf[256];
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, ap);
-  va_end(ap);
-  fputs(buf, stderr);
-}
-
-void write_stdout(const char *fmt, ...) {
-  char buf[256];
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, ap);
-  va_end(ap);
-  fputs(buf, stdout);
-}

@@ -6,6 +6,26 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifndef DEFAULT_CGROUP_CONTROLLERS_PATH
+#define DEFAULT_CGROUP_CONTROLLERS_PATH "/sys/fs/cgroup/cgroup.controllers"
+#endif
+
+/**
+ * @struct limits_t
+ * @brief Describes resource limits and cgroup options for a process.
+ * @var pid         Target process ID for cgroup operations.
+ * @var cgname      Relative cgroup name (to /sys/fs/cgroup).
+ * @var cpu_percent CPU usage limit as a percentage (1..100, 0=unset).
+ * @var cpu_quota   CPU quota in microseconds (-1 if unset).
+ * @var cpu_period  CPU period in microseconds (-1 if unset).
+ * @var cpu_max_raw Raw string for CPU max value (if set, write directly).
+ * @var mem_max     Memory limit in bytes (-1 if unset).
+ * @var io_max      Array of strings for IO limits ("MAJ:MIN key=val ...",
+ * NULL-terminated).
+ * @var attach_only If true, only attach to cgroup without setting limits.
+ * @var delete_cg   If true, delete the specified cgroup.
+ * @var opts        Additional runtime options (verbose, dry-run, force).
+ */
 typedef struct {
   pid_t pid;
   char *cgname;         // relative to /sys/fs/cgroup
@@ -20,19 +40,63 @@ typedef struct {
   run_opts_t opts;
 } limits_t;
 
+/**
+ * @struct controllers_t
+ * @brief Specifies cgroup controllers to enable for a parent cgroup.
+ * @var parent Parent cgroup path.
+ * @var list   Space-separated list of controllers to enable (e.g., "+cpu
+ * +memory +io").
+ */
 typedef struct {
   const char *parent;
   const char *list;
 } controllers_t;
 
+/**
+ * @struct controller_opts_t
+ * @brief Options for writing a value to a cgroup controller file.
+ * @var file  Controller file name (e.g., "cpu.max").
+ * @var value Value to write to the controller file.
+ */
 typedef struct {
   const char *file;
   const char *value;
 } controller_opts_t;
 
+/**
+ * @brief Apply resource limits and cgroup operations as specified in limits_t.
+ * @param lim Pointer to limits_t structure with desired settings.
+ * @return PLIMIT_OK on success, error code on failure.
+ */
 int apply_limits(const limits_t *lim);
+
+/**
+ * @brief Move a process into the specified cgroup.
+ * @param cgpath Full path to the cgroup.
+ * @param pid    Process ID to move.
+ * @param opts   Runtime options (verbose, dry-run, etc.).
+ * @return PLIMIT_OK on success, error code on failure.
+ */
 int move_pid(const char *cgpath, pid_t pid, const run_opts_t *opts);
+
+/**
+ * @brief Get the full path to a cgroup given its relative name.
+ * @param name Relative cgroup name.
+ * @return Newly allocated string with full cgroup path (caller must free).
+ */
 char *cg_full_path(const char *name);
+
+/**
+ * @brief Get the parent cgroup path for a given cgroup name.
+ * @param name Relative cgroup name.
+ * @return Newly allocated string with parent cgroup path (caller must free).
+ */
 char *cg_parent(const char *name);
+
+/**
+ * @brief Check if the system is using cgroup v2.
+ * @return 1 if cgroup v2 is present, 0 otherwise
+ */
+int have_cgroupv2(void);
 
 #endif

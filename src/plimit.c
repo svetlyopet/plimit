@@ -52,16 +52,16 @@ int main(int argc, char **argv) {
     printf("plimit v%s\n", PLIMIT_VERSION);
     printf("Usage: plimit [options]\n\n");
     arg_print_glossary(stdout, argtable, "  %-25s %s\n");
-    return 0;
+    return PLIMIT_OK;
   }
   if (version->count) {
     print_version();
-    return 0;
+    return PLIMIT_OK;
   }
   if (nerrors > 0) {
     arg_print_errors(stderr, end, "plimit: ");
-    write_stderr("Try --help for more information.\n");
-    return 1;
+    slogf(LOG_STDERR, "Try --help for more information.\n");
+    return PLIMIT_ERR_ARG;
   }
 
   limits_t lim;
@@ -70,9 +70,17 @@ int main(int argc, char **argv) {
   lim.cpu_period = -1;
   lim.mem_max = -1;
   lim.io_max = NULL;
+  lim.attach_only = attach_only->count > 0;
+  lim.delete_cg = delete_cg->count > 0;
   lim.opts.verbose = verbose->count > 0;
   lim.opts.dry_run = dry_run->count > 0;
   lim.opts.force = force->count > 0;
+
+  if (lim.opts.verbose && lim.opts.dry_run) {
+    fatal_errorf("error: --verbose and --dry-run cannot be used together");
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return PLIMIT_ERR_ARG;
+  }
 
   if (pid->count) {
     lim.pid = (pid_t)pid->ival[0];
@@ -103,17 +111,16 @@ int main(int argc, char **argv) {
   if (cgname->count) {
     lim.cgname = strdup(cgname->sval[0]);
   }
-  lim.attach_only = attach_only->count > 0;
-  lim.delete_cg = delete_cg->count > 0;
 
   if (!lim.cgname && !lim.delete_cg && lim.pid > 0) {
     if (asprintf(&lim.cgname, "plimit/%d", lim.pid) < 0) {
-      sysdie("oom");
+      fatal_sys_errorf(
+          "main: failed to allocate memory for cgroup name (pid=%d)", lim.pid);
     }
   }
 
   if (!lim.delete_cg && lim.pid <= 0) {
-    write_stderr("error: --pid is required\n\n");
+    slogf(LOG_STDERR, "error: --pid is required\n\n");
     printf("Try --help for more information.\n");
     if (lim.cgname) {
       free(lim.cgname);
@@ -129,20 +136,24 @@ int main(int argc, char **argv) {
     }
 
     arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
-    return 2;
+    return PLIMIT_ERR_ARG;
   }
 
   if ((lim.cpu_quota > 0 && lim.cpu_period <= 0) ||
       (lim.cpu_period > 0 && lim.cpu_quota <= 0)) {
-    die("both --cpu-quota and --cpu-period are required together");
+    fatal_errorf(
+        "error: both --cpu-quota and --cpu-period are required together");
   }
 
   int rc = apply_limits(&lim);
-  if (rc != 0) {
-    return 1;
+  if (rc != PLIMIT_OK) {
+    fatal_errorf("error: failed to apply limits (error code: %d)", rc);
   }
   if (lim.opts.verbose) {
-    write_stdout("Done.\n");
+    vlogf(lim.opts.verbose, "[info] ACTION: cgroups set | PID: %d | CGROUP: "
+                            "'%s' | STATUS: Completed");
+  } else {
+    slogf(LOG_STDOUT, "cgroup %s applied for PID %d", lim.cgname, lim.pid);
   }
 
   if (lim.cgname) {
@@ -159,5 +170,5 @@ int main(int argc, char **argv) {
   }
 
   arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
-  return 0;
+  return PLIMIT_OK;
 }

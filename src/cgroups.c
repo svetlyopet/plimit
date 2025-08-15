@@ -9,43 +9,42 @@
 
 static const char *CGROOT = "/sys/fs/cgroup";
 
-static char *xstrdup(const char *s) {
-  size_t n = strlen(s) + 1;
-  char *p = malloc(n);
-  if (!p) {
-    sysdie("oom");
-    free(p);
-    return NULL;
-  }
-  memcpy(p, s, n);
-  return p;
-}
-
 char *cg_full_path(const char *name) {
   char *p = NULL;
   if (asprintf(&p, "%s/%s", CGROOT, name) < 0) {
-    sysdie("oom");
+    fatal_sys_errorf(
+        "cg_full_path: failed to allocate memory for cgroup path (name=%s)",
+        name);
   }
   return p;
 }
 
 char *cg_parent(const char *name) {
   if (!name) {
-    sysdie("cg_parent: name is NULL");
+    fatal_sys_errorf("cg_parent: name is NULL");
     return NULL;
   }
   const char *slash = strrchr(name, '/');
   if (!slash) {
-    return xstrdup(CGROOT);
+    char *p = NULL;
+    if (asprintf(&p, "%s/plimit", CGROOT) < 0) {
+      fatal_sys_errorf(
+          "cg_parent: failed to allocate memory for parent path (name=%s)",
+          name);
+    }
+    return p;
   }
   size_t len = slash - name;
   char *rel = strndup(name, len);
   if (!rel) {
-    sysdie("oom");
+    fatal_sys_errorf(
+        "cg_parent: failed to allocate memory for parent substring (name=%s)",
+        name);
   }
   char *p = NULL;
   if (asprintf(&p, "%s/%s", CGROOT, rel) < 0) {
-    sysdie("oom");
+    fatal_sys_errorf(
+        "cg_parent: failed to allocate memory for parent path (rel=%s)", rel);
   }
   free(rel);
   return p;
@@ -56,26 +55,44 @@ int enable_controllers(controllers_t controllers, bool dry_run, bool verbose) {
   snprintf(path, sizeof(path), "%s/cgroup.subtree_control", controllers.parent);
   // Example: list="+cpu +memory +io"
   if (dry_run) {
-    vlogf(verbose, "[dry-run] echo '%s' > %s", controllers.list, path);
-    return 0;
+    slogf(
+        LOG_STDOUT,
+        "[dry-run] ACTION: Enable controllers | PATH: '%s' | CONTROLLERS: '%s'",
+        path, controllers.list);
+    return PLIMIT_OK;
   }
   int rc = write_file(path, controllers.list, false, verbose);
-  if (rc != 0) {
-    return -1;
+  if (rc != PLIMIT_OK) {
+    return PLIMIT_ERR_IO;
   }
-  return 0;
+  vlogf(verbose,
+        "[info] ACTION: Controllers enabled | PATH: '%s' | CONTROLLERS: '%s'",
+        path, controllers.list);
+  return PLIMIT_OK;
 }
 
 static int write_controller(const char *cgpath, controller_opts_t ctrl_opts,
                             const run_opts_t *opts) {
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "%s/%s", cgpath, ctrl_opts.file);
-  vlogf(opts->verbose, "write %s = '%s'", path, ctrl_opts.value);
-  if (write_file(path, ctrl_opts.value, opts->dry_run, opts->verbose) != 0) {
-    write_stderr("error writing %s: %s\n", path, strerror(errno));
-    return -1;
+  vlogf(
+      opts->verbose,
+      "[info] ACTION: Write controller | PATH: '%s' | FILE: '%s' | VALUE: '%s'",
+      cgpath, ctrl_opts.file, ctrl_opts.value);
+  if (create_file(path, 0644, opts->dry_run, opts->verbose) != PLIMIT_OK) {
+    slogf(LOG_STDERR,
+          "[error] ACTION: Create file failed | PATH: '%s' | ERRNO: %s", path,
+          strerror(errno));
+    return PLIMIT_ERR_IO;
   }
-  return 0;
+  if (write_file(path, ctrl_opts.value, opts->dry_run, opts->verbose) !=
+      PLIMIT_OK) {
+    slogf(LOG_STDERR,
+          "[error] ACTION: Write file failed | PATH: '%s' | ERRNO: %s", path,
+          strerror(errno));
+    return PLIMIT_ERR_IO;
+  }
+  return PLIMIT_OK;
 }
 
 int move_pid(const char *cgpath, pid_t pid, const run_opts_t *opts) {
@@ -105,7 +122,7 @@ static int apply_cpu(const char *cgpath, const limits_t *lim) {
     controller_opts_t ctrl_opts = {.file = "cpu.max", .value = buf};
     return write_controller(cgpath, ctrl_opts, &lim->opts);
   }
-  return 0;
+  return PLIMIT_OK;
 }
 
 static int apply_mem(const char *cgpath, const limits_t *lim) {
@@ -115,84 +132,95 @@ static int apply_mem(const char *cgpath, const limits_t *lim) {
     controller_opts_t ctrl_opts = {.file = "memory.max", .value = buf};
     return write_controller(cgpath, ctrl_opts, &lim->opts);
   }
-  return 0;
+  return PLIMIT_OK;
 }
 
 static int apply_io(const char *cgpath, const limits_t *lim) {
   if (!lim->io_max) {
-    return 0;
+    return PLIMIT_OK;
   }
   for (char **p = lim->io_max; *p; ++p) {
     controller_opts_t ctrl_opts = {.file = "io.max", .value = *p};
-    if (write_controller(cgpath, ctrl_opts, &lim->opts) != 0) {
-      return -1;
+    if (write_controller(cgpath, ctrl_opts, &lim->opts) != PLIMIT_OK) {
+      return PLIMIT_ERR_IO;
     }
   }
-  return 0;
+  return PLIMIT_OK;
 }
 
 int apply_limits(const limits_t *lim) {
   if (!have_cgroupv2()) {
-    die("cgroup v2 not detected at /sys/fs/cgroup");
+    fatal_sys_errorf("apply_limits: cgroup v2 not detected at /sys/fs/cgroup");
   }
   if (!is_root()) {
-    die("must be run as root or with CAP_SYS_ADMIN");
+    fatal_sys_errorf("apply_limits: must be run as root or with CAP_SYS_ADMIN");
   }
 
   if (lim->delete_cg) {
     if (!lim->cgname) {
-      die("--delete requires --cgname");
+      fatal_errorf("apply_limits: --delete requires --cgname");
     }
     char *cgpath = cg_full_path(lim->cgname);
     if (!lim->opts.dry_run) {
       if (rmdir(cgpath) != 0) {
-        sysdie("failed to delete %s", cgpath);
+        fatal_sys_errorf("apply_limits: failed to delete gcroup directory %s",
+                         cgpath);
       }
     } else {
-      vlogf(lim->opts.verbose, "[dry-run] rmdir %s", cgpath);
+      vlogf(lim->opts.verbose,
+            "[dry-run] ACTION: Delete cgroup directory | PATH: '%s'", cgpath);
     }
     free(cgpath);
-    return 0;
+    return PLIMIT_OK;
   }
 
   if (!lim->cgname) {
-    die("missing --cgname (will default from PID in main)");
+    vlogf(lim->opts.verbose, "[info] missing --cgname (will default to PID)");
   }
 
   char *cgpath = cg_full_path(lim->cgname);
   char *parent = cg_parent(lim->cgname);
 
   if (lim->opts.force) {
-    if (ensure_dir(parent, 0755, lim->opts.dry_run, lim->opts.verbose) != 0) {
-      sysdie("mkdir %s", parent);
+    if (ensure_dir(parent, 0755, lim->opts.dry_run, lim->opts.verbose) !=
+        PLIMIT_OK) {
+      fatal_sys_errorf("apply_limits: failed to create parent directory '%s'", parent);
     }
     controllers_t controllers = {.parent = parent, .list = "+cpu +memory +io"};
     enable_controllers(controllers, lim->opts.dry_run, lim->opts.verbose);
   }
 
-  if (ensure_dir(cgpath, 0755, lim->opts.dry_run, lim->opts.verbose) != 0) {
-    sysdie("mkdir %s", cgpath);
+  if (ensure_dir(cgpath, 0755, lim->opts.dry_run, lim->opts.verbose) !=
+      PLIMIT_OK) {
+    fatal_sys_errorf("apply_limits: failed to ensure directory '%s'", cgpath);
   }
 
   if (!lim->attach_only) {
-    if (apply_cpu(cgpath, lim) != 0) {
-      die("failed to apply cpu limits");
+    if (apply_cpu(cgpath, lim) != PLIMIT_OK) {
+      fatal_sys_errorf("apply_limits: failed to apply cpu limits");
     }
-    if (apply_mem(cgpath, lim) != 0) {
-      die("failed to apply memory limits");
+    if (apply_mem(cgpath, lim) != PLIMIT_OK) {
+      fatal_sys_errorf("apply_limits: failed to apply memory limits");
     }
-    if (apply_io(cgpath, lim) != 0) {
-      die("failed to apply io limits");
+    if (apply_io(cgpath, lim) != PLIMIT_OK) {
+      fatal_sys_errorf("apply_limits: failed to apply io limits");
     }
   }
 
   if (lim->pid > 0) {
-    if (move_pid(cgpath, lim->pid, &lim->opts) != 0) {
-      die("failed to move pid");
+    if (move_pid(cgpath, lim->pid, &lim->opts) != PLIMIT_OK) {
+      fatal_sys_errorf("apply_limits: failed to move pid");
     }
+    vlogf(lim->opts.verbose, "[info] ACTION: Move PID | PATH: '%s' | PID: %d",
+          cgpath, lim->pid);
   }
 
   free(cgpath);
   free(parent);
-  return 0;
+  return PLIMIT_OK;
+}
+
+int have_cgroupv2(void) {
+  struct stat st;
+  return stat(DEFAULT_CGROUP_CONTROLLERS_PATH, &st) == 0;
 }
