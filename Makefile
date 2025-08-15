@@ -39,7 +39,7 @@ PREFIX ?= /usr/local/bin
 OBJS := $(PLIMIT).o cgroups.o utils.o $(LIB_ARGTABLE_NAME).o
 
 # Build plimit executable
-$(PLIMIT): format lint dir $(OBJS)
+$(PLIMIT): dir $(OBJS)
 	@echo "Building $(PLIMIT) version $(PLIMIT_VERSION)..."
 	@$(CC) $(CFLAGS) $(LFLAGS) -o $(BIN_DIR)/$(PLIMIT) $(foreach file,$(OBJS),$(BUILD_DIR)/$(file))
 	@echo "Build complete!"
