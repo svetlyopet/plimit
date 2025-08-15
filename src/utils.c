@@ -57,7 +57,7 @@ void fatal_sys_errorf(const char *fmt, ...) {
 
 int create_file(const char *path, mode_t mode, bool dry_run, bool verbose) {
   if (dry_run) {
-    slogf(LOG_STDOUT, "[dry-run] ACTION: create file | PATH: '%s' | MODE: %o",
+    slogf(LOG_STDOUT, "[dry-run] ACTION: Create file | PATH: '%s' | MODE: %o",
           path, mode);
     return PLIMIT_OK;
   }
@@ -69,14 +69,14 @@ int create_file(const char *path, mode_t mode, bool dry_run, bool verbose) {
     return PLIMIT_ERR_IO;
   }
   close(fd);
-  vlogf(verbose, "[info] ACTION: create file | PATH: '%s' | MODE: %o", path,
+  vlogf(verbose, "[info] ACTION: Create file | PATH: '%s' | MODE: %o", path,
         mode);
   return PLIMIT_OK;
 }
 
 int write_file(const char *path, const char *data, bool dry_run, bool verbose) {
   if (dry_run) {
-    slogf(LOG_STDOUT, "[dry-run] ACTION: write file | PATH: '%s' | DATA: '%s'",
+    slogf(LOG_STDOUT, "[dry-run] ACTION: Write file | PATH: '%s' | DATA: '%s'",
           path, data);
     return PLIMIT_OK;
   }
@@ -90,7 +90,7 @@ int write_file(const char *path, const char *data, bool dry_run, bool verbose) {
   if (n < 0 || (size_t)n != len) {
     return PLIMIT_ERR_IO;
   }
-  vlogf(verbose, "[info] ACTION: write file | PATH: '%s' | DATA: '%s'", path,
+  vlogf(verbose, "[info] ACTION: Write file | PATH: '%s' | DATA: '%s'", path,
         data);
   return PLIMIT_OK;
 }
@@ -98,7 +98,7 @@ int write_file(const char *path, const char *data, bool dry_run, bool verbose) {
 int append_file(const char *path, const char *data, bool dry_run,
                 bool verbose) {
   if (dry_run) {
-    slogf(LOG_STDOUT, "[dry-run] ACTION: append file | PATH: '%s' | DATA: '%s'",
+    slogf(LOG_STDOUT, "[dry-run] ACTION: Append file | PATH: '%s' | DATA: '%s'",
           path, data);
     return PLIMIT_OK;
   }
@@ -112,7 +112,7 @@ int append_file(const char *path, const char *data, bool dry_run,
   if (n < 0 || (size_t)n != len) {
     return PLIMIT_ERR_IO;
   }
-  vlogf(verbose, "[info] ACTION: append file | PATH: '%s' | DATA: '%s'", path,
+  vlogf(verbose, "[info] ACTION: Append file | PATH: '%s' | DATA: '%s'", path,
         data);
   return PLIMIT_OK;
 }

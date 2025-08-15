@@ -150,8 +150,8 @@ int main(int argc, char **argv) {
     fatal_errorf("error: failed to apply limits (error code: %d)", rc);
   }
   if (lim.opts.verbose) {
-    vlogf(lim.opts.verbose, "[info] ACTION: cgroups set | PID: %d | CGROUP: "
-                            "'%s' | STATUS: Completed");
+    vlogf(lim.opts.verbose, "[info] ACTION: Set cgroup | PID: %d | CGROUP: "
+                            "'%s' | STATUS: Completed", lim.pid, lim.cgname);
   } else {
     slogf(LOG_STDOUT, "cgroup %s applied for PID %d", lim.cgname, lim.pid);
   }
