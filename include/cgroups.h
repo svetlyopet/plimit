@@ -6,9 +6,30 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef DEFAULT_CGROUP_CONTROLLERS_PATH
-#define DEFAULT_CGROUP_CONTROLLERS_PATH "/sys/fs/cgroup/cgroup.controllers"
+#ifndef CGROUPS_PLIMIT_DEFAULT_NAME
+#define CGROUPS_PLIMIT_DEFAULT_NAME "plimit"
 #endif
+
+#ifndef CGROUPS_PLIMIT_DEFAULT_PATH
+#define CGROUPS_PLIMIT_DEFAULT_PATH "/sys/fs/cgroup/plimit"
+#endif
+
+#ifndef CGROUPS_DEFAULT_CONTROLLERS_PATH
+#define CGROUPS_DEFAULT_CONTROLLERS_PATH "/sys/fs/cgroup/cgroup.controllers"
+#endif
+
+/**
+ * @struct run_opts_t
+ * @brief Options controlling program execution and logging.
+ * @var verbose Enable verbose output
+ * @var dry_run Simulate actions without making changes
+ * @var force   Force actions, ignoring warnings
+ */
+typedef struct {
+  bool verbose;
+  bool dry_run;
+  bool force;
+} run_opts_t;
 
 /**
  * @struct limits_t
@@ -71,13 +92,21 @@ typedef struct {
 int apply_limits(const limits_t *lim);
 
 /**
- * @brief Move a process into the specified cgroup.
+ * @brief Add a process into the specified cgroup.
  * @param cgpath Full path to the cgroup.
  * @param pid    Process ID to move.
  * @param opts   Runtime options (verbose, dry-run, etc.).
  * @return PLIMIT_OK on success, error code on failure.
  */
-int move_pid(const char *cgpath, pid_t pid, const run_opts_t *opts);
+int add_proc_cgroup(const char *cgpath, pid_t pid, const run_opts_t *opts);
+
+/**
+ * @brief Delete a cgroup.
+ * @param cgpath Full path to the cgroup.
+ * @param opts   Runtime options (verbose, dry-run, etc.).
+ * @return PLIMIT_OK on success, error code on failure.
+ */
+int delete_cgroup(const char *cgpath, const run_opts_t *opts);
 
 /**
  * @brief Get the full path to a cgroup given its relative name.

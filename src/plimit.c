@@ -9,9 +9,29 @@
 #include "cgroups.h"
 #include "utils.h"
 
-static void print_version(void) { printf("plimit %s\n", PLIMIT_VERSION); }
+static void print_version(void) {
+  log_msg(LOG_NO_PREFIX, "plimit %s", PLIMIT_VERSION);
+}
+
+void free_limits(limits_t *lim) {
+  if (lim->cgname)
+    free(lim->cgname);
+  if (lim->cpu_max_raw)
+    free(lim->cpu_max_raw);
+  if (lim->io_max) {
+    for (char **p = lim->io_max; *p; ++p)
+      free(*p);
+    free((void *)lim->io_max);
+  }
+}
 
 int main(int argc, char **argv) {
+  if (!run_as_root()) {
+    log_msg(LOG_ERROR, "must be run as root or with CAP_SYS_ADMIN: %s",
+            strerror(errno));
+    return PLIMIT_ERR_PERM;
+  }
+
   struct arg_lit *help = arg_lit0("h", "help", "show this help");
   struct arg_lit *version = arg_lit0("v", "version", "show version");
   struct arg_int *pid = arg_int0(
@@ -49,18 +69,21 @@ int main(int argc, char **argv) {
 
   int nerrors = arg_parse(argc, argv, argtable);
   if (help->count) {
-    printf("plimit v%s\n", PLIMIT_VERSION);
-    printf("Usage: plimit [options]\n\n");
+    print_version();
+    log_msg(LOG_NO_PREFIX, "Usage: plimit [options]\n\n");
     arg_print_glossary(stdout, argtable, "  %-25s %s\n");
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
     return PLIMIT_OK;
   }
   if (version->count) {
     print_version();
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
     return PLIMIT_OK;
   }
   if (nerrors > 0) {
-    arg_print_errors(stderr, end, "plimit: ");
-    slogf(LOG_STDERR, "Try --help for more information.\n");
+    arg_print_errors(stdout, end, "plimit");
+    log_msg(LOG_NO_PREFIX, "Try --help for more information.");
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
     return PLIMIT_ERR_ARG;
   }
 
@@ -77,7 +100,9 @@ int main(int argc, char **argv) {
   lim.opts.force = force->count > 0;
 
   if (lim.opts.verbose && lim.opts.dry_run) {
-    fatal_errorf("error: --verbose and --dry-run cannot be used together");
+    log_msg(LOG_PREFIX, "--verbose and --dry-run cannot be used together");
+    log_msg(LOG_NO_PREFIX, "Try --help for more information.");
+    free_limits(&lim);
     arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
     return PLIMIT_ERR_ARG;
   }
@@ -112,63 +137,82 @@ int main(int argc, char **argv) {
     lim.cgname = strdup(cgname->sval[0]);
   }
 
-  if (!lim.cgname && !lim.delete_cg && lim.pid > 0) {
-    if (asprintf(&lim.cgname, "plimit/%d", lim.pid) < 0) {
-      fatal_sys_errorf(
-          "main: failed to allocate memory for cgroup name (pid=%d)", lim.pid);
-    }
-  }
-
-  if (!lim.delete_cg && lim.pid <= 0) {
-    slogf(LOG_STDERR, "error: --pid is required\n\n");
-    printf("Try --help for more information.\n");
-    if (lim.cgname) {
-      free(lim.cgname);
-    }
-    if (lim.cpu_max_raw) {
-      free(lim.cpu_max_raw);
-    }
-    if (lim.io_max) {
-      for (char **p = lim.io_max; *p; ++p) {
-        free(*p);
-      }
-      free((void *)lim.io_max);
-    }
-
+  if (!lim.cgname && lim.delete_cg) {
+    log_msg(LOG_PREFIX, "--cgname is required with --delete");
+    log_msg(LOG_NO_PREFIX, "Try --help for more information.");
+    free_limits(&lim);
     arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
     return PLIMIT_ERR_ARG;
   }
 
+  if ((!lim.delete_cg && !lim.cgname) && lim.pid <= 0) {
+    log_msg(LOG_PREFIX, "--pid is required unless both --delete and "
+                        "--cgname are not set");
+    log_msg(LOG_NO_PREFIX, "Try --help for more information.");
+    free_limits(&lim);
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return PLIMIT_ERR_ARG;
+  }
+
+  if (lim.cgname && lim.delete_cg) {
+    int rc = delete_cgroup(lim.cgname, &lim.opts);
+    free_limits(&lim);
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return rc;
+  }
+
+  if (!lim.cgname && lim.pid > 0) {
+    if (asprintf(&lim.cgname, "%s/%d", CGROUPS_PLIMIT_DEFAULT_NAME, lim.pid) <
+        0) {
+      log_msg(LOG_ERROR, "failed to allocate memory for cgroup name (pid=%d)",
+              lim.pid);
+      free_limits(&lim);
+      arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+      return PLIMIT_ERR_MEM;
+    }
+  }
+
   if ((lim.cpu_quota > 0 && lim.cpu_period <= 0) ||
       (lim.cpu_period > 0 && lim.cpu_quota <= 0)) {
-    fatal_errorf(
-        "error: both --cpu-quota and --cpu-period are required together");
+    log_msg(LOG_PREFIX,
+            "both --cpu-quota and --cpu-period are required together");
+    log_msg(LOG_NO_PREFIX, "Try --help for more information.");
+    free_limits(&lim);
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return PLIMIT_ERR_ARG;
+  }
+
+  if (!lim.cgname) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", lim.pid);
+    lim.cgname = strdup(buf);
+    if (!lim.cgname) {
+      log_msg(LOG_ERROR, "failed to allocate memory for cgroup name (pid=%d)",
+              lim.pid);
+      return PLIMIT_ERR_MEM;
+    }
+    if (lim.opts.verbose) {
+      log_msg(LOG_INFO, "--cgname not set, defaulting cgroup name to '%s'",
+              lim.cgname);
+    }
   }
 
   int rc = apply_limits(&lim);
   if (rc != PLIMIT_OK) {
-    fatal_errorf("error: failed to apply limits (error code: %d)", rc);
-  }
-  if (lim.opts.verbose) {
-    vlogf(lim.opts.verbose, "[info] ACTION: Set cgroup | PID: %d | CGROUP: "
-                            "'%s' | STATUS: Completed", lim.pid, lim.cgname);
-  } else {
-    slogf(LOG_STDOUT, "cgroup %s applied for PID %d", lim.cgname, lim.pid);
+    free_limits(&lim);
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return rc;
   }
 
-  if (lim.cgname) {
-    free(lim.cgname);
-  }
-  if (lim.cpu_max_raw) {
-    free(lim.cpu_max_raw);
-  }
-  if (lim.io_max) {
-    for (char **p = lim.io_max; *p; ++p) {
-      free(*p);
-    }
-    free((void *)lim.io_max);
+  if (lim.opts.dry_run) {
+    log_msg(LOG_DRY_RUN, "applied cgroup %s for PID %d", lim.cgname, lim.pid);
+    free_limits(&lim);
+    arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
+    return PLIMIT_OK;
   }
 
+  log_msg(LOG_NO_PREFIX, "applied cgroup %s for PID %d", lim.cgname, lim.pid);
+  free_limits(&lim);
   arg_freetable((void **)argtable, sizeof(argtable) / sizeof(argtable[0]));
   return PLIMIT_OK;
 }
