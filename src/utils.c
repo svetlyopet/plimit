@@ -64,7 +64,11 @@ int write_file(bool dry_run, const file_write_args_t *args, bool verbose) {
   // check since we expect that the parent directory if the file might not exist
   // yet
   if (dry_run) {
-    log_msg(LOG_DRY_RUN, "write '%s' to file %s", args->data, args->path);
+    if (strcmp(args->data, "") == 0) {
+      log_msg(LOG_DRY_RUN, "truncate file %s", args->path);
+    } else {
+      log_msg(LOG_DRY_RUN, "write '%s' to file %s", args->data, args->path);
+    }
     return PLIMIT_OK;
   }
   if (access(args->path, W_OK) != 0) {
@@ -72,8 +76,23 @@ int write_file(bool dry_run, const file_write_args_t *args, bool verbose) {
             strerror(errno));
     return PLIMIT_ERR_IO;
   }
-  int fd =
-      open(args->path, O_WRONLY | O_CREAT | O_CLOEXEC | O_TRUNC, args->mode);
+  int fd;
+  if (strcmp(args->data, "") == 0) {
+    // Open with O_WRONLY | O_TRUNC to truncate the file
+    fd = open(args->path, O_WRONLY | O_TRUNC);
+    if (fd < 0) {
+      log_msg(LOG_ERROR, "cannot truncate file '%s': %s", args->path, strerror(errno));
+      return PLIMIT_ERR_IO;
+    }
+    close(fd);
+    if (verbose) {
+      log_msg(LOG_INFO, "truncate file %s", args->path);
+    }
+    return PLIMIT_OK;
+  }
+  
+  // Open with O_WRONLY | O_CREAT | O_CLOEXEC | O_TRUNC to write data
+  fd = open(args->path, O_WRONLY | O_CREAT | O_CLOEXEC | O_TRUNC, args->mode);
   if (fd < 0) {
     return PLIMIT_ERR_IO;
   }
@@ -86,7 +105,11 @@ int write_file(bool dry_run, const file_write_args_t *args, bool verbose) {
     return PLIMIT_ERR_IO;
   }
   if (verbose) {
-    log_msg(LOG_INFO, "write '%s' to file %s", args->data, args->path);
+    if (strcmp(args->data, "") == 0) {
+      log_msg(LOG_INFO, "truncate file %s", args->path);
+    } else {
+      log_msg(LOG_INFO, "write '%s' to file %s", args->data, args->path);
+    }
   }
   return PLIMIT_OK;
 }

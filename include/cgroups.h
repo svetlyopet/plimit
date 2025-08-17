@@ -6,6 +6,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifndef CGROUP_ROOT_PATH
+#define CGROUP_ROOT_PATH "/sys/fs/cgroup"
+#endif
+
 #ifndef CGROUPS_PLIMIT_DEFAULT_NAME
 #define CGROUPS_PLIMIT_DEFAULT_NAME "plimit"
 #endif
@@ -101,12 +105,28 @@ int apply_limits(const limits_t *lim);
 int add_proc_cgroup(const char *cgpath, pid_t pid, const run_opts_t *opts);
 
 /**
- * @brief Delete a cgroup.
- * @param cgpath Full path to the cgroup.
+ * @brief Remove all processes from a cgroup.
+ * @param cgname Cgroup name.
  * @param opts   Runtime options (verbose, dry-run, etc.).
  * @return PLIMIT_OK on success, error code on failure.
  */
-int delete_cgroup(const char *cgpath, const run_opts_t *opts);
+int remove_procs_cgroup(const char *cgname, const run_opts_t *opts);
+
+/**
+ * @brief Get all processes in a cgroup.
+ * @param rc     Pointer to store the return code (PLIMIT_OK or error).
+ * @param cgname Cgroup name.
+ * @return NULL-terminated array of process IDs, or NULL on error.
+ */
+char **get_procs_cgroup(int *rc, const char *cgname);
+
+/**
+ * @brief Delete a cgroup.
+ * @param cgname Cgroup name.
+ * @param opts   Runtime options (verbose, dry-run, etc.).
+ * @return PLIMIT_OK on success, error code on failure.
+ */
+int delete_cgroup(const char *cgname, const run_opts_t *opts);
 
 /**
  * @brief Get the full path to a cgroup given its relative name.
