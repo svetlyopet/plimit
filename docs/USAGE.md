@@ -5,7 +5,7 @@ plimit [options]
 
 Options:
   --pid PID                 PID to move into the cgroup (requried unless --delete with --cgname).
-  --cgname NAME             Cgroup name (default: "proc-limit/<PID>").
+  --cgname NAME             Cgroup name (default: "plimit/<PID>").
   --attach-only             Do not change limits, only move PID into an existing cgroup.
   --delete                  Delete the target cgroup (requires --cgname). PID not required.
   --dry-run                 Print actions without making changes.

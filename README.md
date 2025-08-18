@@ -1,7 +1,7 @@
 # plimit — cgroup v2 limiter for a running process
 
 `plimit` is a tool that creates or reuses cgroups 
-to set CPU, memory, and block I/O limits.
+to set CPU, memory, and block I/O limits for running processes.
 
 > Requires Linux with the unified cgroup v2 hierarchy mounted 
 at `/sys/fs/cgroup`, and to be executed with root priviledges.
@@ -29,4 +29,8 @@ sudo plimit --pid 1234 --cpu-percent 50 --mem-max 2G --io-max "8:0 rbps=1048576 
 
 ## Usage
 
-See [docs/USAGE.md](docs/USAGE.md) for full details and examples.
+See [USAGE.md](docs/USAGE.md) for full details and examples.
+
+## Development
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
